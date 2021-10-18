@@ -8,8 +8,9 @@
 
 ## Code
 
-### Geo-Temporal Feature Learning: 
-Code to conduct geo-temporal feature learning. The `encoder` consists of code for 2D CNN backbone. The `temporalAttention` consists of the implementation of transformer-based attention module.
+### GeoTemporalFeatureLearning: 
+Code to conduct geo-temporal feature learning. 
+The `encoder` consists of code for 2D CNN backbone. The `temporalAttention` consists of the implementation of transformer-based attention module.
 
 
 ### TrajectorySmoothingNetwork: 
