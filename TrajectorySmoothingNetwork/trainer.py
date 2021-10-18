@@ -1,0 +1,350 @@
+import torch
+import numpy as np
+from tqdm import tqdm
+
+from os.path import dirname, abspath, join, exists
+from os import makedirs
+from datetime import datetime
+import json
+from geopy.distance import lonlat, distance
+import scipy.io as sio
+
+
+PAD_INDEX = 0
+
+BASE_DIR = dirname(abspath(__file__))
+
+
+class EpochSeq2SeqTrainer:
+
+	def __init__(self, model,
+				 train_dataloader, val_dataloader,
+				 loss_function, metric_function, optimizer,
+				 logger, run_name,
+				 save_config, save_checkpoint,
+				 config):
+
+		self.config = config
+		self.device = torch.device(self.config['device'])
+
+		self.model = model.to(self.device)
+		self.train_dataloader = train_dataloader
+		self.val_dataloader = val_dataloader
+		self.min_error = 600.0
+		self.compute_delta = True
+		self.l1_loss = torch.nn.L1Loss()
+		self.bce_loss = torch.nn.BCEWithLogitsLoss()
+		self.use_gps_loss = config['use_gps_loss']
+		self.use_clip_loss = config['use_clip_loss']
+		self.max_gps_distance = self.compute_distance_in_meters(37.65, 37.81, -122.5, -122.38)
+		self.loss_function = loss_function.to(self.device)
+		self.metric_function = metric_function
+		self.optimizer = optimizer
+		self.clip_grads = self.config['clip_grads']
+
+		self.logger = logger
+		self.checkpoint_dir = join(BASE_DIR, 'checkpoints', run_name)
+
+		if not exists(self.checkpoint_dir):
+			makedirs(self.checkpoint_dir)
+
+		if save_config is None:
+			config_filepath = join(self.checkpoint_dir, 'config.json')
+		else:
+			config_filepath = save_config
+		with open(config_filepath, 'w') as config_file:
+			json.dump(self.config, config_file)
+
+		self.print_every = self.config['print_every']
+		self.save_every = self.config['save_every']
+
+		self.epoch = 0
+		self.history = []
+
+		self.start_time = datetime.now()
+
+		self.best_val_metric = None
+		self.best_checkpoint_filepath = None
+
+		self.save_checkpoint = save_checkpoint
+		self.save_format = 'epoch={epoch:0>3}-val_loss={val_loss:<.3}-val_metrics={val_metrics}.pth'
+
+		self.log_format = (
+			"Epoch: {epoch:>3} "
+			"Progress: {progress:<.1%} "
+			"Elapsed: {elapsed} "
+			"Examples/second: {per_second:<.1} "
+			"Train Loss: {train_loss:<.6} "
+			"Val Loss: {val_loss:<.6} "
+			"Train Metrics: {train_metrics} "
+			"Val Metrics: {val_metrics} "
+			"Learning rate: {current_lr:<.4} "
+		)
+
+	def compute_distance_in_meters(self, x1, y1, x2, y2):
+		return distance(lonlat(*(y1, x1)), lonlat(*(y2, x2))).m
+
+
+	def denormalize_lat_lon_coordinates(self, x, min_x, max_x):
+		for i in range(len(x)):
+			x[i] = float(min_x) + x[i] * (float(max_x) - float(min_x))
+		return x
+
+
+	def validate(self, dist_array, top_k):
+		accuracy = 0.0
+		data_amount = 0.0
+		for i in range(dist_array.shape[0]):
+			gt_dist = dist_array[i, i]
+			prediction = np.sum(dist_array[:, i] < gt_dist)
+			if prediction < top_k:
+				accuracy += 1.0
+			data_amount += 1.0
+		accuracy /= data_amount
+
+		return accuracy * 100
+
+	def compute_error_distance(self, ref_db_lat, ref_db_lon, val_lat, val_lon, idx_sorted):
+		dist = 0.0
+		distarray = []
+		for i in range(idx_sorted.shape[0]):
+			distarray.append(self.compute_distance_in_meters(val_lat[i], val_lon[i], ref_db_lat[idx_sorted[i][0]],
+														ref_db_lon[idx_sorted[i][0]]))
+
+		return distarray
+
+	def error_in_meters(self, sorted_idx, lat, lon):
+		return self.compute_error_distance(lat, lon, lat, lon, sorted_idx)
+
+	def gps_loss_function_updated(self, bdd_feats, gsv_feats, lat, lon):
+		dists_feat_bdd = (2 - 2 * np.dot(bdd_feats.squeeze().cpu().detach().numpy(), np.transpose(bdd_feats.squeeze().cpu().detach().numpy())))/4.0
+		dists_feat_gsv = (2 - 2 * np.dot(gsv_feats.squeeze().cpu().detach().numpy(), np.transpose(gsv_feats.squeeze().cpu().detach().numpy())))/4.0
+		dists_gps = np.zeros_like(dists_feat_bdd)
+		for i in range(dists_gps.shape[0]):
+			for j in range(dists_gps.shape[1]):
+				dists_gps[i][j] = self.compute_distance_in_meters(lat[i][0], lon[i][0], lat[j][0], lon[j][0])/self.max_gps_distance
+		loss = self.bce_loss(torch.tensor(dists_feat_bdd), torch.tensor(dists_gps)) + self.bce_loss(torch.tensor(dists_feat_gsv), torch.tensor(dists_gps))
+
+		return loss
+
+	def gps_loss_function(self, bdd_feats, gsv_feats, lat, lon):
+		dists_feat_bdd = 2 - 2 * np.dot(bdd_feats.squeeze().cpu().detach().numpy(), np.transpose(bdd_feats.squeeze().cpu().detach().numpy()))
+		dists_feat_gsv = 2 - 2 * np.dot(gsv_feats.squeeze().cpu().detach().numpy(), np.transpose(gsv_feats.squeeze().cpu().detach().numpy()))
+		dists_gps = np.zeros_like(dists_feat_bdd)
+		for i in range(dists_gps.shape[0]):
+			for j in range(dists_gps.shape[1]):
+				dists_gps
+				[i][j] = self.compute_distance_in_meters(lat[i][0], lon[i][0], lat[j][0], lon[j][0])
+		dists_gps = 4 * dists_gps/dists_gps.max()
+		loss = self.l1_loss(torch.tensor(dists_feat_bdd), torch.tensor(dists_gps)) + self.l1_loss(torch.tensor(dists_feat_gsv), torch.tensor(dists_gps))
+
+		return loss
+
+	def compute_dist_trajectory(self, gt, pred):
+		dist = []
+		for i in range(len(gt)):
+			dist.append(self.compute_distance_in_meters(gt[i][0], gt[i][1], pred[i][0], pred[i][1]))
+		return  dist
+
+
+
+	def run_val_epoch(self, dataloader, mode='val'):
+		batch_losses = []
+		batch_counts = []
+		num_frames = self.config['num_frames']
+		num_test_imgs = len(dataloader) * num_frames
+		batch_size= dataloader.batch_size
+		curr_idx = 0
+		dist_error = []
+
+		with torch.no_grad():
+			for batch_idx, (noisy_lat, noisy_lon, gt_lat, gt_lon, noisy_lat_denorm, noisy_lon_denorm, gt_lat_denorm, gt_lon_denorm) in enumerate(dataloader):
+				noisy_gps = torch.cat((torch.unsqueeze(noisy_lat, 2), torch.unsqueeze(noisy_lon, 2)), 2)
+				gt_gps = torch.cat((torch.unsqueeze(gt_lat, 2), torch.unsqueeze(gt_lon, 2)), 2)
+				noisy_gps, gt_gps = (noisy_gps.float()).to(self.device), (gt_gps.float()).to(self.device)
+				label_confidence = torch.eq(gt_gps, noisy_gps)
+				# target_confidence = torch.where(label_confidence == True, torch.tensor(0.0).cuda(),
+				# 								torch.tensor(1.0).cuda())
+				if self.compute_delta:
+					smoothed_gps_delta, confidence = self.model(noisy_gps)
+					pred_confidence = torch.where(torch.sigmoid(confidence) < 0.5, torch.tensor(0.0).cuda(),
+												  torch.tensor(1.0).cuda())
+
+					smoothed_gps_delta = torch.where(pred_confidence == 0.0, torch.tensor(0.0).cuda(),
+													 smoothed_gps_delta)
+					smoothed_gps = noisy_gps + 0.01 * smoothed_gps_delta
+				else:
+					smoothed_gps, confidences = self.model(noisy_gps)
+
+				batch_loss = self.loss_function(smoothed_gps.view(-1, 2), gt_gps.view(-1, 2))
+				batch_count = noisy_gps.shape[0]
+				smoothed_lat_denorm = self.denormalize_lat_lon_coordinates(smoothed_gps[:,:,0], dataloader.dataset.gps_limit[0], dataloader.dataset.gps_limit[1])
+				smoothed_lon_denorm = self.denormalize_lat_lon_coordinates(smoothed_gps[:,:,1], dataloader.dataset.gps_limit[2], dataloader.dataset.gps_limit[3])
+				gt_lat_denorm = self.denormalize_lat_lon_coordinates(gt_lat,
+																		   dataloader.dataset.gps_limit[0],
+																		   dataloader.dataset.gps_limit[1])
+				gt_lon_denorm = self.denormalize_lat_lon_coordinates(gt_lon,
+																		   dataloader.dataset.gps_limit[2],
+																		   dataloader.dataset.gps_limit[3])
+
+
+				smoothed_traj = torch.cat((torch.unsqueeze(smoothed_lat_denorm, 2), torch.unsqueeze(smoothed_lon_denorm, 2)), 2)
+				gt_traj = torch.cat((torch.unsqueeze(gt_lat_denorm, 2), torch.unsqueeze(gt_lon_denorm, 2)), 2)
+				err_dist = self.compute_dist_trajectory(smoothed_traj.squeeze(), gt_traj.squeeze())
+				dist_error.append(err_dist)
+
+
+				batch_losses.append(batch_loss.item())
+				batch_counts.append(batch_count)
+
+				curr_idx = curr_idx + batch_size*num_frames
+
+
+		print('\n   compute accuracy')
+		dists_per_traj = ([sum(d)/30 for i, d in enumerate(dist_error)])
+		error_meters = sum(dists_per_traj) / (len(dists_per_traj) )
+		top1 = 0.0
+		print("Average localization error: ", error_meters)
+		return top1, [error_meters]
+
+
+	def run_epoch(self, dataloader, mode='train'):
+		batch_losses = []
+		batch_counts = []
+		for noisy_lat, noisy_lon, gt_lat, gt_lon in tqdm(dataloader):
+			noisy_gps = torch.cat((torch.unsqueeze(noisy_lat, 2), torch.unsqueeze(noisy_lon, 2)), 2)
+			gt_gps = torch.cat((torch.unsqueeze(gt_lat,2), torch.unsqueeze(gt_lon,2)), 2)
+			noisy_gps, gt_gps = (noisy_gps.float()).to(self.device), (gt_gps.float()).to(self.device)
+			label_confidence = torch.eq(gt_gps, noisy_gps)
+			is_noisy_gt = torch.where(label_confidence == True, torch.tensor(0.0).cuda(), torch.tensor(1.0).cuda())
+			if self.compute_delta:
+				smoothed_gps_delta, is_noisy_pred = self.model(noisy_gps)
+				p = torch.sigmoid(is_noisy_pred)
+				is_noisy_pred_prob = torch.where(p < 0.5, torch.tensor(0.0).cuda(),
+											  torch.tensor(1.0).cuda())
+				loss_confidence = self.l1_loss(p, is_noisy_gt)
+
+				smoothed_gps_delta = torch.where(is_noisy_pred_prob == 0.0, torch.tensor(0.0).cuda(), smoothed_gps_delta)
+				smoothed_gps = noisy_gps + 0.01 * smoothed_gps_delta
+			else:
+				smoothed_gps, confidences = self.model(noisy_gps)
+
+			batch_loss = self.loss_function(smoothed_gps.view(-1, 2), gt_gps.view(-1, 2))
+			loss =  batch_loss + loss_confidence
+
+			batch_count = noisy_gps.shape[0]
+
+			if mode == 'train':
+				self.optimizer.zero_grad()
+				loss.backward()
+				if self.clip_grads:
+					torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1)
+				self.optimizer.step()
+
+			batch_losses.append(batch_loss.item())
+			batch_counts.append(batch_count)
+
+		epoch_loss = sum(batch_losses) / sum(batch_counts)
+		epoch_metrics = [epoch_loss]
+
+		return epoch_loss, epoch_metrics
+
+
+
+
+	def run(self, epochs=10):
+		self.config['evaluate'] =False
+		if self.config['evaluate']:
+			self.model.eval()
+			val_epoch_loss, error_meters = self.run_val_epoch(self.val_dataloader, mode='val')
+			print(error_meters)
+			return
+
+		else:
+			for epoch in range(self.epoch, epochs + 1):
+				self.epoch = epoch
+
+				self.model.train()
+
+				epoch_start_time = datetime.now()
+				train_epoch_loss, train_epoch_metrics = self.run_epoch(self.train_dataloader, mode='train')
+				epoch_end_time = datetime.now()
+
+				self.model.eval()
+
+				error_meters_city = []
+				for dataloader in self.val_dataloader:
+					val_epoch_loss, error_meters = self.run_val_epoch(dataloader, mode='val')
+					error_meters_city.append(error_meters[0])
+				top1 = val_epoch_loss
+
+				if epoch % self.print_every == 0 and self.logger:
+					per_second = len(self.train_dataloader.dataset) / ((epoch_end_time - epoch_start_time).seconds + 1)
+					current_lr = self.optimizer.param_groups[0]['lr']
+					log_message = self.log_format.format(epoch=epoch,
+														 progress=epoch / epochs,
+														 per_second=per_second,
+														 train_loss=train_epoch_loss,
+														 val_loss =top1,
+														 train_metrics=[round(metric, 4) for metric in train_epoch_metrics],
+														 val_metrics=[round(metric, 4) for metric in error_meters],
+														 current_lr=current_lr,
+														 elapsed=self._elapsed_time()
+														 )
+
+					self.logger.info(log_message)
+
+				curr_error = sum(error_meters_city)/len(error_meters_city)
+				error_meters.append((curr_error))
+				print("Current localization error (average) : ", curr_error)
+				if curr_error < self.min_error:
+					self.min_error = curr_error
+					self._save_model(epoch, train_epoch_loss, val_epoch_loss, train_epoch_metrics, error_meters)
+					eph = epoch
+
+					print("Minimum localization error : " + str(self.min_error) + " for epoch : " + str(eph))
+
+	def _save_model(self, epoch, train_epoch_loss, val_epoch_loss, train_epoch_metrics, val_epoch_metrics):
+
+		checkpoint_filename = self.save_format.format(
+			epoch=epoch,
+			val_loss=val_epoch_loss,
+			val_metrics = '-'.join(['{:<.3}'.format(v) for v in val_epoch_metrics])
+		)
+
+		if self.save_checkpoint is None:
+			checkpoint_filepath = join(self.checkpoint_dir, checkpoint_filename)
+		else:
+			checkpoint_filepath = self.save_checkpoint
+
+		save_state = {
+			'epoch': epoch,
+			'train_loss': train_epoch_loss,
+			'train_metrics': train_epoch_metrics,
+			'val_loss': val_epoch_loss,
+			'val_metrics': val_epoch_metrics,
+			'checkpoint': checkpoint_filepath,
+		}
+
+		torch.save(self.model.state_dict(), checkpoint_filepath)
+		if self.epoch > 0:
+			self.history.append(save_state)
+
+		representative_val_metric = val_epoch_metrics[0]
+		if self.best_val_metric is None or self.best_val_metric > representative_val_metric:
+			self.best_val_metric = representative_val_metric
+			self.val_loss_at_best = val_epoch_loss
+			self.train_loss_at_best = train_epoch_loss
+			self.train_metrics_at_best = train_epoch_metrics
+			self.val_metrics_at_best = val_epoch_metrics
+			self.best_checkpoint_filepath = checkpoint_filepath
+
+		if self.logger:
+			self.logger.info("Saved model to {}".format(checkpoint_filepath))
+			self.logger.info("Current best model is {}".format(self.best_checkpoint_filepath))
+			print("\n")
+
+	def _elapsed_time(self):
+		now = datetime.now()
+		elapsed = now - self.start_time
+		return str(elapsed).split('.')[0]
