@@ -12,18 +12,8 @@
 Code to conduct geo-temporal feature learning. The `encoder` consists of code for 2D CNN backbone. The `temporalAttention` consists of the implementation of transformer-based attention module.
 
 
-
-
 ### TrajectorySmoothingNetwork: 
-Code to train/test the trajectory smoothing network.
-
-
-
-## Training and Test data
-### Datasets
-The original datasets are available here:
-1. [CVUSA](http://cs.uky.edu/~jacobs/datasets/cvusa/)
-2. [UCF-OP](https://drive.google.com/open?id=17ioMhP8hBHGHGJuIsPx2fKesFsz-Q9d1) Please feel free to contact me via email if the link doesn't work.
+Code to train/test the `trajectory smoothing network`.
 
 
 
