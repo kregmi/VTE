@@ -3,7 +3,7 @@
 [[Paper, ICCV 2021](https://openaccess.thecvf.com/content/ICCV2021/papers/Regmi_Video_Geo-Localization_Employing_Geo-Temporal_Feature_Learning_and_GPS_Trajectory_Smoothing_ICCV_2021_paper.pdf)]
 
 ## Poster
-![poster](resources/iccv2021-poster.jpg)
+![poster](resources/iccv2021_poster.jpg)
 
 
 ## Code
