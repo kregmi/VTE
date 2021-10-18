@@ -1,0 +1,7 @@
+@inproceedings{regmi2021video,
+  title={Video Geo-Localization Employing Geo-Temporal Feature Learning and GPS Trajectory Smoothing},
+  author={Regmi, Krishna and Shah, Mubarak},
+  booktitle={Proceedings of the IEEE/CVF International Conference on Computer Vision},
+  pages={12126--12135},
+  year={2021}
+}
