@@ -25,4 +25,4 @@ If you find our works useful for your research, please cite our work:
 
 ## Questions
 
-Please contact: 'krishna.regmi7@gmail.com'
+Please contact: `krishna.regmi7@gmail.com`
