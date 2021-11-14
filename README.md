@@ -28,8 +28,10 @@ The `encoder` consists of code for 2D CNN backbone. The `temporalAttention` cons
 
 
 - Training/Testing the model
-```bash
+
 Training is done in two stages. 
+
+```bash
 First, train the `encoder` module using the `main.py` file.
 Save the encoder featues using the `test_bdd.py` file.
 ```
@@ -54,7 +56,10 @@ Code to train/test the `trajectory smoothing network`.
 ## Dataset
 
 BDD videos are downloaded from the [official BDD website](https://bdd-data.berkeley.edu/).
+
 The corresponding Google StreetView Images are downloaded using [Google Cloud Platform](https://console.cloud.google.com/apis/)
+
+Please contact us for additional instruction to obtain the dataset used in this work. 
 
 
 ## Citation
