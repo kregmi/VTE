@@ -10,7 +10,9 @@
 ## Setup
 
 ### Getting Started
-- Install PyTorch and its dependencies: `conda install pytorch torchvision torchaudio cudatoolkit=10.2 -c pytorch`
+- Install PyTorch and its dependencies: 
+
+`conda install pytorch torchvision torchaudio cudatoolkit=10.2 -c pytorch`
 
 
 - Clone this repo:
@@ -40,7 +42,7 @@ Save the encoder featues using the `test_bdd.py` file.
 Second, train the `temporalAttention` module using the `train.py` file.
 Use `eval.py` to evaluate the trained model. 
 ```
-Additional instruction is provided within each module's readme.
+Additional instruction is provided within each module's README.
 
 
 
@@ -58,7 +60,7 @@ Code to train/test the `trajectory smoothing network`.
 
 BDD videos are downloaded from the [official BDD website](https://bdd-data.berkeley.edu/).
 
-The corresponding Google StreetView Images are downloaded using [Google Cloud Platform](https://console.cloud.google.com/apis/)
+The corresponding Google StreetView Images are downloaded using [Google Cloud Platform](https://console.cloud.google.com/apis/).
 
 Please contact us for additional instruction to obtain the dataset used in this work. 
 
