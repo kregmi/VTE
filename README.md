@@ -47,8 +47,9 @@ Additional instruction is provided within each module's readme.
 ### TrajectorySmoothingNetwork: 
 Code to train/test the `trajectory smoothing network`.
 
-```bash
 - Training/Testing the model
+
+```bash
 `train.py` contains the code for training. 
 `eval.py` contains the code for testing.
 ```
