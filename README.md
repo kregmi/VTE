@@ -6,6 +6,20 @@
 ![poster](resources/iccv2021_poster.jpg)
 
 
+
+## Setup
+
+### Getting Started
+- Install PyTorch and its dependencies: `conda install pytorch torchvision torchaudio cudatoolkit=10.2 -c pytorch`
+
+
+- Clone this repo:
+```bash
+https://github.com/kregmi/VTE.git
+cd VTE
+```
+
+
 ## Code
 
 ### GeoTemporalFeatureLearning: 
@@ -13,9 +27,34 @@ Code to conduct geo-temporal feature learning.
 The `encoder` consists of code for 2D CNN backbone. The `temporalAttention` consists of the implementation of transformer-based attention module.
 
 
+- Training/Testing the model
+```bash
+Training is done in two stages. 
+First, train the `encoder` module using the `main.py` file.
+Save the encoder featues using the `test_bdd.py` file.
+```
+
+```bash
+Second, train the `temporalAttention` module using the `train.py` file.
+Use `eval.py` to evaluate the trained model. 
+```
+Additional instruction is provided within each module's readme.
+
+
+
 ### TrajectorySmoothingNetwork: 
 Code to train/test the `trajectory smoothing network`.
 
+```bash
+- Training/Testing the model
+`train.py` contains the code for training. 
+`eval.py` contains the code for testing.
+```
+
+## Dataset
+
+BDD videos are downloaded from the [official BDD website](https://bdd-data.berkeley.edu/).
+The corresponding Google StreetView Images are downloaded using [Google Cloud Platform](https://console.cloud.google.com/apis/)
 
 
 ## Citation
